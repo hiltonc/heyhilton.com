@@ -6,12 +6,11 @@
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
 		<meta name="viewport" content="width=device-width" />
 		<title>heyhilton.com</title>
 		<style>
 			* { margin: 0; padding: 0; box-sizing: border-box; }
-			body { overflow: hidden; background: #0a0a0a; }
+			body { overflow: hidden; background: #fff; }
 			canvas { display: block; width: 100vw; height: 100vh; }
 		</style>
 	</head>
@@ -19,121 +18,123 @@
 		<canvas id="c"></canvas>
 		<script>
 			const canvas = document.getElementById('c') as HTMLCanvasElement;
-			const gl = canvas.getContext('webgl2')!;
+			const ctx = canvas.getContext('2d')!;
+			const dpr = devicePixelRatio;
 
 			function resize() {
-				canvas.width = window.innerWidth * devicePixelRatio;
-				canvas.height = window.innerHeight * devicePixelRatio;
-				gl.viewport(0, 0, canvas.width, canvas.height);
+				canvas.width = window.innerWidth * dpr;
+				canvas.height = window.innerHeight * dpr;
+				ctx.scale(dpr, dpr);
 			}
 			window.addEventListener('resize', resize);
 			resize();
 
-			const vert = `#version 300 es
-				in vec2 a;
-				void main() { gl_Position = vec4(a, 0, 1); }`;
+			const W = () => window.innerWidth;
+			const H = () => window.innerHeight;
 
-			const frag = `#version 300 es
-				precision highp float;
-				uniform float t;
-				uniform vec2 r;
-				uniform vec2 m;
-				out vec4 o;
+			// attractors - fixed points that pull particles into orbits
+			const attractors = [
+				{ x: 0.3, y: 0.4, strength: 800 },
+				{ x: 0.7, y: 0.6, strength: 600 },
+				{ x: 0.5, y: 0.2, strength: 500 },
+				{ x: 0.2, y: 0.8, strength: 400 },
+				{ x: 0.8, y: 0.3, strength: 550 },
+			];
 
-				// noise helpers
-				vec3 mod289(vec3 x) { return x - floor(x / 289.0) * 289.0; }
-				vec2 mod289(vec2 x) { return x - floor(x / 289.0) * 289.0; }
-				vec3 permute(vec3 x) { return mod289((x * 34.0 + 1.0) * x); }
-
-				float snoise(vec2 v) {
-					const vec4 C = vec4(0.211324865405187, 0.366025403784439,
-						-0.577350269189626, 0.024390243902439);
-					vec2 i = floor(v + dot(v, C.yy));
-					vec2 x0 = v - i + dot(i, C.xx);
-					vec2 i1 = x0.x > x0.y ? vec2(1, 0) : vec2(0, 1);
-					vec4 x12 = x0.xyxy + C.xxzz;
-					x12.xy -= i1;
-					i = mod289(i);
-					vec3 p = permute(permute(i.y + vec3(0, i1.y, 1)) + i.x + vec3(0, i1.x, 1));
-					vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
-					m = m * m; m = m * m;
-					vec3 x = 2.0 * fract(p * C.www) - 1.0;
-					vec3 h = abs(x) - 0.5;
-					vec3 ox = floor(x + 0.5);
-					vec3 a0 = x - ox;
-					m *= 1.79284291400159 - 0.85373472095314 * (a0*a0 + h*h);
-					vec3 g;
-					g.x = a0.x * x0.x + h.x * x0.y;
-					g.yz = a0.yz * x12.xz + h.yz * x12.yw;
-					return 130.0 * dot(m, g);
-				}
-
-				void main() {
-					vec2 uv = gl_FragCoord.xy / r;
-					vec2 p = (gl_FragCoord.xy - 0.5 * r) / r.y;
-
-					// mouse influence (normalized -1 to 1)
-					vec2 mp = (m - 0.5) * 2.0;
-					p += mp * 0.1;
-
-					float n1 = snoise(p * 2.0 + t * 0.15);
-					float n2 = snoise(p * 4.0 - t * 0.1 + 3.0);
-					float n3 = snoise(p * 1.5 + vec2(t * 0.08, -t * 0.12));
-
-					float flow = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
-
-					// color palette - deep blues, teals, hints of warm light
-					vec3 c1 = vec3(0.02, 0.05, 0.15); // deep navy
-					vec3 c2 = vec3(0.05, 0.18, 0.25); // dark teal
-					vec3 c3 = vec3(0.12, 0.35, 0.45); // teal
-					vec3 c4 = vec3(0.85, 0.65, 0.35); // warm accent
-
-					vec3 col = mix(c1, c2, smoothstep(-0.5, 0.2, flow));
-					col = mix(col, c3, smoothstep(0.1, 0.6, flow));
-					col = mix(col, c4, smoothstep(0.55, 0.8, flow) * 0.3);
-
-					// subtle vignette
-					float vig = 1.0 - 0.4 * length(uv - 0.5);
-					col *= vig;
-
-					o = vec4(col, 1);
-				}`;
-
-			function compile(src: string, type: number) {
-				const s = gl.createShader(type)!;
-				gl.shaderSource(s, src);
-				gl.compileShader(s);
-				return s;
+			interface Particle {
+				x: number;
+				y: number;
+				vx: number;
+				vy: number;
+				size: number;
 			}
 
-			const prog = gl.createProgram()!;
-			gl.attachShader(prog, compile(vert, gl.VERTEX_SHADER));
-			gl.attachShader(prog, compile(frag, gl.FRAGMENT_SHADER));
-			gl.linkProgram(prog);
-			gl.useProgram(prog);
+			const N = 600;
+			const particles: Particle[] = [];
 
-			const buf = gl.createBuffer();
-			gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-			gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-			const a = gl.getAttribLocation(prog, 'a');
-			gl.enableVertexAttribArray(a);
-			gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+			for (let i = 0; i < N; i++) {
+				particles.push({
+					x: Math.random() * W(),
+					y: Math.random() * H(),
+					vx: (Math.random() - 0.5) * 2,
+					vy: (Math.random() - 0.5) * 2,
+					size: Math.random() * 2.5 + 1,
+				});
+			}
 
-			const tLoc = gl.getUniformLocation(prog, 't');
-			const rLoc = gl.getUniformLocation(prog, 'r');
-			const mLoc = gl.getUniformLocation(prog, 'm');
-
-			let mx = 0.5, my = 0.5;
+			let mx = W() / 2;
+			let my = H() / 2;
 			document.addEventListener('mousemove', e => {
-				mx = e.clientX / window.innerWidth;
-				my = 1.0 - e.clientY / window.innerHeight;
+				mx = e.clientX;
+				my = e.clientY;
+			});
+			document.addEventListener('touchmove', e => {
+				e.preventDefault();
+				mx = e.touches[0].clientX;
+				my = e.touches[0].clientY;
+			}, { passive: false });
+			document.addEventListener('touchstart', e => {
+				mx = e.touches[0].clientX;
+				my = e.touches[0].clientY;
+			});
+			document.addEventListener('touchend', () => {
+				mx = -9999;
+				my = -9999;
 			});
 
-			function frame(now: number) {
-				gl.uniform1f(tLoc, now * 0.001);
-				gl.uniform2f(rLoc, canvas.width, canvas.height);
-				gl.uniform2f(mLoc, mx, my);
-				gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+			function frame() {
+				ctx.clearRect(0, 0, W(), H());
+
+				for (const p of particles) {
+					// attraction to fixed attractors
+					for (const a of attractors) {
+						const ax = a.x * W();
+						const ay = a.y * H();
+						const dx = ax - p.x;
+						const dy = ay - p.y;
+						const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+						const f = a.strength / (dist * dist);
+						// tangential force for orbiting (perpendicular to radial)
+						p.vx += (-dy * f + dx * f * 0.3) * 0.01;
+						p.vy += (dx * f + dy * f * 0.3) * 0.01;
+					}
+
+					// mouse repulsion
+					const mdx = p.x - mx;
+					const mdy = p.y - my;
+					const mDist = Math.sqrt(mdx * mdx + mdy * mdy) + 1;
+					if (mDist < 150) {
+						const mf = 800 / (mDist * mDist);
+						p.vx += mdx * mf;
+						p.vy += mdy * mf;
+					}
+
+					// damping
+					p.vx *= 0.98;
+					p.vy *= 0.98;
+
+					// speed limit
+					const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+					if (speed > 6) {
+						p.vx = (p.vx / speed) * 6;
+						p.vy = (p.vy / speed) * 6;
+					}
+
+					p.x += p.vx;
+					p.y += p.vy;
+
+					// wrap around edges
+					if (p.x < -10) p.x = W() + 10;
+					if (p.x > W() + 10) p.x = -10;
+					if (p.y < -10) p.y = H() + 10;
+					if (p.y > H() + 10) p.y = -10;
+
+					// draw as square pixel
+					ctx.fillStyle = '#000';
+					const s = Math.floor(p.size);
+					ctx.fillRect(Math.floor(p.x), Math.floor(p.y), s, s);
+				}
+
 				requestAnimationFrame(frame);
 			}
 			requestAnimationFrame(frame);
