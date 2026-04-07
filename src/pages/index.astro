@@ -6,12 +6,13 @@
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<meta name="viewport" content="width=device-width" />
-		<title>heyhilton.com</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+		<title>Hey, Hilton</title>
 		<style>
 			* { margin: 0; padding: 0; box-sizing: border-box; }
-			body { overflow: hidden; background: #fff; }
-			canvas { display: block; width: 100vw; height: 100vh; }
+			html, body { height: 100%; }
+			body { overflow: hidden; background: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+			canvas { display: block; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
 		</style>
 	</head>
 	<body>
