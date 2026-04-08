@@ -25,7 +25,7 @@
 			function resize() {
 				canvas.width = window.innerWidth * dpr;
 				canvas.height = window.innerHeight * dpr;
-				ctx.scale(dpr, dpr);
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 			}
 			window.addEventListener('resize', resize);
 			resize();
@@ -33,13 +33,17 @@
 			const W = () => window.innerWidth;
 			const H = () => window.innerHeight;
 
-			// attractors - fixed points that pull particles into orbits
+			const T = 80 * 52;
+			const s = new Date(1982, 2, 17);
+			const elapsed = Math.floor((Date.now() - s.getTime()) / (7 * 24 * 60 * 60 * 1000));
+			const N = Math.max(0, T - elapsed);
+
 			const attractors = [
-				{ x: 0.3, y: 0.4, strength: 800 },
-				{ x: 0.7, y: 0.6, strength: 600 },
-				{ x: 0.5, y: 0.2, strength: 500 },
-				{ x: 0.2, y: 0.8, strength: 400 },
-				{ x: 0.8, y: 0.3, strength: 550 },
+				{ x: 0.3, y: 0.4, strength: 500 },
+				{ x: 0.7, y: 0.6, strength: 400 },
+				{ x: 0.5, y: 0.2, strength: 350 },
+				{ x: 0.2, y: 0.8, strength: 300 },
+				{ x: 0.8, y: 0.3, strength: 380 },
 			];
 
 			interface Particle {
@@ -48,11 +52,10 @@
 				vx: number;
 				vy: number;
 				size: number;
+				mark: boolean;
 			}
 
-			const N = 600;
 			const particles: Particle[] = [];
-
 			for (let i = 0; i < N; i++) {
 				particles.push({
 					x: Math.random() * W(),
@@ -60,47 +63,86 @@
 					vx: (Math.random() - 0.5) * 2,
 					vy: (Math.random() - 0.5) * 2,
 					size: Math.random() * 2.5 + 1,
+					mark: i === 0,
 				});
 			}
 
-			let mx = W() / 2;
-			let my = H() / 2;
-			document.addEventListener('mousemove', e => {
-				mx = e.clientX;
-				my = e.clientY;
-			});
-			document.addEventListener('touchmove', e => {
-				e.preventDefault();
-				mx = e.touches[0].clientX;
-				my = e.touches[0].clientY;
-			}, { passive: false });
-			document.addEventListener('touchstart', e => {
-				mx = e.touches[0].clientX;
-				my = e.touches[0].clientY;
-			});
-			document.addEventListener('touchend', () => {
-				mx = -9999;
-				my = -9999;
-			});
+			let mx = -9999;
+			let my = -9999;
+
+			document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+			document.addEventListener('mouseleave', () => { mx = -9999; my = -9999; });
+			document.addEventListener('touchmove', e => { e.preventDefault(); mx = e.touches[0].clientX; my = e.touches[0].clientY; }, { passive: false });
+			document.addEventListener('touchstart', e => { mx = e.touches[0].clientX; my = e.touches[0].clientY; });
+			document.addEventListener('touchend', () => { mx = -9999; my = -9999; });
+
+			const CELL = 12;
+			const MAX_SPEED = 6;
+			const MAX_CELLS = 300 * 200;
+			const gridHead = new Int32Array(MAX_CELLS).fill(-1);
+			const gridNext = new Int32Array(N).fill(-1);
 
 			function frame() {
-				ctx.clearRect(0, 0, W(), H());
+				const w = W();
+				const h = H();
+				ctx.clearRect(0, 0, w, h);
 
-				for (const p of particles) {
-					// attraction to fixed attractors
-					for (const a of attractors) {
-						const ax = a.x * W();
-						const ay = a.y * H();
-						const dx = ax - p.x;
-						const dy = ay - p.y;
-						const dist = Math.sqrt(dx * dx + dy * dy) + 1;
-						const f = a.strength / (dist * dist);
-						// tangential force for orbiting (perpendicular to radial)
-						p.vx += (-dy * f + dx * f * 0.3) * 0.01;
-						p.vy += (dx * f + dy * f * 0.3) * 0.01;
+				const cols = (w / CELL | 0) + 1;
+				const rows = (h / CELL | 0) + 1;
+				const totalCells = cols * rows;
+				for (let i = 0; i < totalCells; i++) gridHead[i] = -1;
+
+				for (let i = 0; i < N; i++) {
+					const p = particles[i];
+					const key = (p.x / CELL | 0) + (p.y / CELL | 0) * cols;
+					if (key >= 0 && key < totalCells) {
+						gridNext[i] = gridHead[key];
+						gridHead[key] = i;
+					} else {
+						gridNext[i] = -1;
+					}
+				}
+
+				let marked: Particle | null = null;
+				for (let i = 0; i < N; i++) {
+					const p = particles[i];
+					const cx = p.x / CELL | 0;
+					const cy = p.y / CELL | 0;
+					for (let dy = -1; dy <= 1; dy++) {
+						const ny = cy + dy;
+						if (ny < 0 || ny >= rows) continue;
+						for (let dx = -1; dx <= 1; dx++) {
+							const nx = cx + dx;
+							if (nx < 0 || nx >= cols) continue;
+							let j = gridHead[nx + ny * cols];
+							while (j !== -1) {
+								if (j !== i) {
+									const q = particles[j];
+									const rx = p.x - q.x;
+									const ry = p.y - q.y;
+									const d = rx * rx + ry * ry;
+									if (d < 16 && d > 0.1) {
+										const f = 0.3 / d;
+										p.vx += rx * f;
+										p.vy += ry * f;
+									}
+								}
+								j = gridNext[j];
+							}
+						}
 					}
 
-					// mouse repulsion
+					for (const a of attractors) {
+						const ax = a.x * w;
+						const ay = a.y * h;
+						const adx = ax - p.x;
+						const ady = ay - p.y;
+						const dist = Math.sqrt(adx * adx + ady * ady) + 1;
+						const f = a.strength / (dist * dist);
+						p.vx += (-ady * f + adx * f * 0.3) * 0.01;
+						p.vy += (adx * f + ady * f * 0.3) * 0.01;
+					}
+
 					const mdx = p.x - mx;
 					const mdy = p.y - my;
 					const mDist = Math.sqrt(mdx * mdx + mdy * mdy) + 1;
@@ -110,30 +152,32 @@
 						p.vy += mdy * mf;
 					}
 
-					// damping
 					p.vx *= 0.98;
 					p.vy *= 0.98;
 
-					// speed limit
 					const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-					if (speed > 6) {
-						p.vx = (p.vx / speed) * 6;
-						p.vy = (p.vy / speed) * 6;
+					if (speed > MAX_SPEED) {
+						p.vx = (p.vx / speed) * MAX_SPEED;
+						p.vy = (p.vy / speed) * MAX_SPEED;
 					}
 
 					p.x += p.vx;
 					p.y += p.vy;
 
-					// wrap around edges
-					if (p.x < -10) p.x = W() + 10;
-					if (p.x > W() + 10) p.x = -10;
-					if (p.y < -10) p.y = H() + 10;
-					if (p.y > H() + 10) p.y = -10;
+					if (p.x < -10) p.x = w + 10;
+					if (p.x > w + 10) p.x = -10;
+					if (p.y < -10) p.y = h + 10;
+					if (p.y > h + 10) p.y = -10;
 
-					// draw as square pixel
+					if (p.mark) { marked = p; continue; }
 					ctx.fillStyle = '#000';
-					const s = Math.floor(p.size);
-					ctx.fillRect(Math.floor(p.x), Math.floor(p.y), s, s);
+					ctx.fillRect(p.x | 0, p.y | 0, p.size | 0, p.size | 0);
+				}
+
+				if (marked) {
+					ctx.fillStyle = '#e00';
+					const sz = (marked.size | 0) + 3;
+					ctx.fillRect(marked.x | 0, marked.y | 0, sz, sz);
 				}
 
 				requestAnimationFrame(frame);
