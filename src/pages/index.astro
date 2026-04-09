@@ -68,9 +68,13 @@
 				});
 			}
 
-			const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-			const particleColor = dark ? '#fff' : '#000';
-			const markColor = dark ? '#f44' : '#e00';
+			const darkMq = matchMedia('(prefers-color-scheme: dark)');
+			let particleColor = darkMq.matches ? '#fff' : '#000';
+			let markColor = darkMq.matches ? '#f44' : '#e00';
+			darkMq.addEventListener('change', e => {
+				particleColor = e.matches ? '#fff' : '#000';
+				markColor = e.matches ? '#f44' : '#e00';
+			});
 
 			let mx = -9999;
 			let my = -9999;
